@@ -1,7 +1,13 @@
 import SwiftUI
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 #if canImport(MobileVLCKit)
 import MobileVLCKit
+#elseif canImport(VLCKit)
+import VLCKit
 #else
 import VLCKitSPM
 #endif
@@ -155,6 +161,7 @@ final class PlayerModel: NSObject, ObservableObject, VLCMediaPlayerDelegate {
     }
 }
 
+#if os(iOS)
 struct VLCView: UIViewRepresentable {
     let model: PlayerModel
     func makeUIView(context: Context) -> UIView {
@@ -167,6 +174,22 @@ struct VLCView: UIViewRepresentable {
     }
     func updateUIView(_ uiView: UIView, context: Context) {}
 }
+#else
+final class PassthroughView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+struct VLCView: NSViewRepresentable {
+    let model: PlayerModel
+    func makeNSView(context: Context) -> NSView {
+        let v = PassthroughView()
+        v.wantsLayer = true
+        v.layer?.backgroundColor = NSColor.black.cgColor
+        model.player.drawable = v
+        return v
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+#endif
 
 // MARK: - Giao diện trình phát
 struct PlayerView: View {
@@ -232,7 +255,7 @@ struct PlayerView: View {
                 }
             }
             .onAppear { start() }
-            .onDisappear { m.stop(); Orientation.set(.portrait) }
+            .onDisappear { m.stop(); Orientation.set(.portrait); Plat.keepAwake(false) }
             .sheet(isPresented: $showSubs) { SubtitlePanel(m: m) }
             .confirmationDialog("Âm thanh", isPresented: $showAudio) {
                 ForEach(m.audioTracks, id: \.0) { t in
@@ -243,8 +266,18 @@ struct PlayerView: View {
                 Button("OK") {}
             } message: { Text(m.errorText ?? "") }
         }
-        .statusBarHidden(true)
-        .persistentSystemOverlays(.hidden)
+        .playerChrome()
+        #if os(macOS)
+        .frame(minWidth: 640, minHeight: 360)
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.space) { m.toggle(); bump(); return .handled }
+        .onKeyPress(.leftArrow) { m.jump(-10); bump(); return .handled }
+        .onKeyPress(.rightArrow) { m.jump(10); bump(); return .handled }
+        .onKeyPress(.escape) { dismissPlayer(); return .handled }
+        .onKeyPress("f") { NSApp.keyWindow?.toggleFullScreen(nil); return .handled }
+        .onContinuousHover { _ in if !showControls { withAnimation { showControls = true } }; bump() }
+        #endif
     }
 
     @ViewBuilder func controls(_ size: CGSize) -> some View {
@@ -253,7 +286,7 @@ struct PlayerView: View {
                 .ignoresSafeArea().allowsHitTesting(false)
             VStack {
                 HStack(spacing: 18) {
-                    Button { dismiss() } label: { Image(systemName: "xmark").font(.title2) }
+                    Button { dismissPlayer() } label: { Image(systemName: "xmark").font(.title2) }.buttonStyle(.plain)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title).font(.headline).lineLimit(1)
                         Text(source.via).font(.caption2).foregroundColor(.white.opacity(0.7))
@@ -289,7 +322,17 @@ struct PlayerView: View {
                 .padding(.horizontal).padding(.bottom, 10)
             }
             .foregroundColor(.white)
+            .buttonStyle(.plain)
         }
+    }
+
+    func dismissPlayer() {
+        #if os(macOS)
+        m.stop(); Plat.keepAwake(false)
+        PlayerWindow.close()
+        #else
+        dismiss()
+        #endif
     }
 
     func tapZone(_ d: Double) -> some View {
@@ -315,7 +358,7 @@ struct PlayerView: View {
 
     func start() {
         Orientation.set(.landscape)
-        UIApplication.shared.isIdleTimerDisabled = true
+        Plat.keepAwake(true)
         m.videoKey = videoId
         let resume = store.position(for: videoId)
         m.onProgress = { t, l in
@@ -390,8 +433,11 @@ struct SubtitlePanel: View {
                 }
             }
             .navigationTitle("Phụ đề")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Xong") { dismiss() } } }
+            #if os(macOS)
+            .frame(minWidth: 460, minHeight: 520)
+            #endif
             .onAppear { m.refreshTracks() }
         }
         .presentationDetents([.medium, .large])
@@ -412,6 +458,7 @@ struct SubtitlePanel: View {
 }
 
 /// Xoay màn hình khi vào/ra trình phát
+#if os(iOS)
 enum Orientation {
     static var mask: UIInterfaceOrientationMask = .allButUpsideDown
     static func set(_ o: UIInterfaceOrientationMask) {
@@ -422,3 +469,29 @@ enum Orientation {
         if o == .portrait { mask = .allButUpsideDown; UIApplication.shared.isIdleTimerDisabled = false }
     }
 }
+#else
+enum Orientation {
+    enum Mask { case portrait, landscape }
+    static func set(_ o: Mask) {}
+}
+
+/// Mac: trình phát mở trong một cửa sổ riêng (có thể bấm F để toàn màn hình)
+enum PlayerWindow {
+    static var window: NSWindow?
+    static func open<V: View>(title: String, _ view: V) {
+        window?.close()
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 640),
+                         styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
+                         backing: .buffered, defer: false)
+        w.title = title
+        w.titlebarAppearsTransparent = true
+        w.backgroundColor = .black
+        w.isReleasedWhenClosed = false
+        w.contentView = NSHostingView(rootView: view.preferredColorScheme(.dark))
+        w.center()
+        w.makeKeyAndOrderFront(nil)
+        window = w
+    }
+    static func close() { window?.close(); window = nil }
+}
+#endif

@@ -29,7 +29,7 @@ jobs:
           export PATH="$PATH:$(go env GOPATH)/bin"
           gomobile init
           mkdir -p ../Frameworks
-          gomobile bind -target=ios/arm64 -iosversion=16.0 -ldflags="-s -w" -o ../Frameworks/Phimengine.xcframework .
+          gomobile bind -target=ios/arm64,macos/arm64 -iosversion=16.0 -ldflags="-s -w" -o ../Frameworks/Phimengine.xcframework .
           ls -la ../Frameworks/Phimengine.xcframework
 
       - name: Tạo project Xcode
@@ -56,8 +56,31 @@ jobs:
           name: PhimTor-ipa
           path: out/PhimTor.ipa
 
+      - name: Build bản Mac
+        run: |
+          xcodebuild -project PhimTor.xcodeproj -scheme PhimTorMac -configuration Release \
+            -destination 'generic/platform=macOS' -derivedDataPath buildmac \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee buildmac.log | grep -E "error:|BUILD" || true
+          grep -q "BUILD SUCCEEDED" buildmac.log
+
+      - name: Đóng gói DMG
+        run: |
+          APP=buildmac/Build/Products/Release/PhimTor.app
+          codesign --force --deep --sign - "$APP"
+          mkdir -p dmg && cp -R "$APP" dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname PhimTor -srcfolder dmg -ov -format UDZO out/PhimTor.dmg
+          ls -la out/PhimTor.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhimTor-dmg
+          path: out/PhimTor.dmg
+
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: build-log
-          path: build.log
+          path: |
+            build.log
+            buildmac.log

@@ -3,20 +3,30 @@ import SwiftUI
 // MARK: - Ứng dụng
 @main
 struct PhimTorApp: App {
+    #if os(iOS)
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    #endif
     @StateObject private var store = AddonStore.shared
     var body: some Scene {
         WindowGroup {
             RootView().environmentObject(store).preferredColorScheme(.dark).tint(.yellow)
+            #if os(macOS)
+                .frame(minWidth: 900, minHeight: 600)
+            #endif
         }
+        #if os(macOS)
+        .windowStyle(.titleBar)
+        #endif
     }
 }
 
+#if os(iOS)
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         Orientation.mask
     }
 }
+#endif
 
 struct RootView: View {
     var body: some View {
@@ -244,7 +254,7 @@ struct SearchView: View {
             }.padding(.vertical)
         }
         .navigationTitle("Tìm kiếm")
-        .searchable(text: $q, placement: .navigationBarDrawer(displayMode: .always), prompt: "Tên phim, phim bộ…")
+        .alwaysSearchable($q, prompt: "Tên phim, phim bộ…")
         .onSubmit(of: .search) { run() }
         .navigationDestination(for: MetaLink.self) { l in DetailView(seed: l.item, addonUrl: l.addonUrl) }
     }
@@ -351,7 +361,7 @@ struct DetailView: View {
             }
         }
         .ignoresSafeArea(edges: .top)
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .navigationDestination(for: StreamLink.self) { l in StreamsView(link: l) }
         .task {
             if meta == nil { meta = await store.meta(type: seed.type, id: seed.id, preferred: addonUrl) }
@@ -409,7 +419,7 @@ struct StreamsView: View {
             }
         }
         .navigationTitle(link.title)
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .searchable(text: $filter, prompt: "Lọc: 1080p, 4K, vietsub…")
         .task {
             guard groups.isEmpty else { return }
@@ -418,15 +428,23 @@ struct StreamsView: View {
             }
             done = true
         }
-        .fullScreenCover(item: $playing) { t in
-            PlayerView(title: link.title, source: t.src, type: link.type, videoId: link.videoId, stream: t.stream,
-                       recent: RecentItem(id: link.meta.id, type: link.meta.type, name: link.meta.name, poster: link.meta.poster,
-                                          addonUrl: link.addonUrl, videoId: link.videoId,
-                                          videoTitle: link.episode != nil ? link.title : nil))
+        #if os(iOS)
+        .fullScreenCover(item: $playing) { t in playerView(t) }
+        #else
+        .onChange(of: playing?.id) { _ in
+            if let t = playing { PlayerWindow.open(title: link.title, playerView(t)); playing = nil }
         }
+        #endif
         .alert("Không phát được", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
             Button("OK") {}
         } message: { Text(errorText ?? "") }
+    }
+
+    func playerView(_ t: PlayTarget) -> PlayerView {
+        PlayerView(title: link.title, source: t.src, type: link.type, videoId: link.videoId, stream: t.stream,
+                   recent: RecentItem(id: link.meta.id, type: link.meta.type, name: link.meta.name, poster: link.meta.poster,
+                                      addonUrl: link.addonUrl, videoId: link.videoId,
+                                      videoTitle: link.episode != nil ? link.title : nil))
     }
 
     func row(_ s: StreamItem) -> some View {
@@ -443,8 +461,8 @@ struct StreamsView: View {
     }
 
     func play(_ s: StreamItem) {
-        if let yt = s.ytId, let u = URL(string: "https://www.youtube.com/watch?v=\(yt)") { UIApplication.shared.open(u); return }
-        if s.url == nil && s.infoHash == nil, let e = s.externalUrl, let u = URL(string: e) { UIApplication.shared.open(u); return }
+        if let yt = s.ytId, let u = URL(string: "https://www.youtube.com/watch?v=\(yt)") { Plat.open(u); return }
+        if s.url == nil && s.infoHash == nil, let e = s.externalUrl, let u = URL(string: e) { Plat.open(u); return }
         resolving = s.id
         Task {
             do {
@@ -469,9 +487,9 @@ struct AddonsView: View {
         List {
             Section {
                 TextField("Dán link manifest.json hoặc stremio://", text: $url)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                    .plainInput(url: true)
                 HStack {
-                    Button("Dán") { url = UIPasteboard.general.string ?? url }
+                    Button("Dán") { url = Plat.paste() ?? url }
                     Spacer()
                     Button { add() } label: { busy ? AnyView(ProgressView()) : AnyView(Text("Cài add-on").bold()) }
                         .disabled(url.isEmpty || busy)
@@ -499,14 +517,16 @@ struct AddonsView: View {
                         if !a.builtIn || a.transportUrl != AddonStore.phuDeViet {
                             Button("Gỡ", role: .destructive) { store.remove(a) }
                         }
-                        Button("Chép link") { UIPasteboard.general.string = a.transportUrl }.tint(.blue)
+                        Button("Chép link") { Plat.copy(a.transportUrl) }.tint(.blue)
                     }
                 }
                 .onMove { store.addons.move(fromOffsets: $0, toOffset: $1) }
             }
         }
         .navigationTitle("Add-on")
+        #if os(iOS)
         .toolbar { EditButton() }
+        #endif
     }
 
     func res(_ n: String) -> String {
@@ -531,7 +551,7 @@ struct SettingsView: View {
         Form {
             Section {
                 SecureField("API key TorBox (không bắt buộc)", text: $store.torboxKey)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .plainInput()
             } header: { Text("TorBox") } footer: {
                 Text("Có key: phim đã có sẵn trên TorBox sẽ phát qua TorBox cho nhanh. Phim chưa có thì PhimTor tự tải torrent ngay trên máy.")
             }
