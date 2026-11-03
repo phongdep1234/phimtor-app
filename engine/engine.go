@@ -76,6 +76,11 @@ func Start(dir string) int {
 	})
 	c, err := torrent.NewClient(cfg)
 	if err != nil {
+		// mạng không hỗ trợ IPv6 → thử lại chỉ dùng IPv4
+		cfg.DisableIPv6 = true
+		c, err = torrent.NewClient(cfg)
+	}
+	if err != nil {
 		setErr(err)
 		return -1
 	}
