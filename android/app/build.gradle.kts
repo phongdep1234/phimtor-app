@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.thayphong.phimtor"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.thayphong.phimtor"
