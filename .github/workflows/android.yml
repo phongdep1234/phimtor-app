@@ -29,7 +29,7 @@ jobs:
           export PATH="$PATH:$(go env GOPATH)/bin"
           gomobile init
           gomobile bind -v -target=android/arm,android/arm64 -androidapi 21 -javapkg com.thayphong \
-            -ldflags="-s -w" -o ../android/app/libs/phimengine.aar .
+            -ldflags="-s -w -checklinkname=0" -o ../android/app/libs/phimengine.aar .
           ls -la ../android/app/libs
 
       - uses: gradle/actions/setup-gradle@v4
