@@ -160,6 +160,8 @@ struct VLCView: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let v = UIView()
         v.backgroundColor = .black
+        // VLC tự chèn view vẽ hình vào đây và "nuốt" mất thao tác chạm → tắt hẳn chạm trên view này
+        v.isUserInteractionEnabled = false
         model.player.drawable = v
         return v
     }
@@ -189,8 +191,14 @@ struct PlayerView: View {
         GeometryReader { geo in
             ZStack {
                 Color.black.ignoresSafeArea()
-                VLCView(model: m).ignoresSafeArea()
-                    .onTapGesture { toggleControls() }
+                VLCView(model: m).ignoresSafeArea().allowsHitTesting(false)
+
+                // lớp trong suốt nhận chạm: chạm 1 lần = hiện/ẩn điều khiển, chạm 2 lần bên trái/phải = tua 10 giây
+                HStack(spacing: 0) {
+                    tapZone(-10)
+                    tapZone(10)
+                }
+                .ignoresSafeArea()
 
                 // phụ đề tự vẽ
                 if !m.subText.isEmpty {
@@ -282,6 +290,16 @@ struct PlayerView: View {
             }
             .foregroundColor(.white)
         }
+    }
+
+    func tapZone(_ d: Double) -> some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                guard !lock else { return }
+                m.jump(d); if showControls { bump() }
+            }
+            .onTapGesture(count: 1) { toggleControls() }
     }
 
     func fmt(_ t: Double) -> String {
