@@ -51,6 +51,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 val Yellow = Color(0xFFFFD54A)
 val Bg = Color(0xFF0E0B22)
@@ -281,9 +284,10 @@ fun SearchScreen(push: (Screen) -> Unit) {
         searching = true; results = emptyList()
         scope.launch {
             val cats = Repo.addons.flatMap { a -> a.manifest.catalogs.filter { it.supportsSearch }.map { a to it } }
-            val out = kotlinx.coroutines.coroutineScope {
-                cats.map { (a, c) -> kotlinx.coroutines.async { Triple("${c.name} · ${a.manifest.name}", a.transportUrl, Repo.catalog(a, c, listOf("search" to query))) } }
-                    .map { it.await() }
+            val out: List<Triple<String, String, List<Meta>>> = coroutineScope {
+                cats.map { (a, c) ->
+                    async { Triple("${c.name} · ${a.manifest.name}", a.transportUrl, Repo.catalog(a, c, listOf("search" to query))) }
+                }.awaitAll()
             }
             results = out.filter { it.third.isNotEmpty() }
             searching = false
