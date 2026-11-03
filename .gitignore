@@ -1,0 +1,5 @@
+build/
+out/
+Frameworks/
+*.xcodeproj/
+.DS_Store

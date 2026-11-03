@@ -1,0 +1,58 @@
+name: PhimTor
+options:
+  bundleIdPrefix: com.thayphong
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  VLCKitSPM:
+    url: https://github.com/tylerjonesio/vlckit-spm
+    exactVersion: 3.6.0
+targets:
+  PhimTor:
+    type: application
+    platform: iOS
+    sources:
+      - path: PhimTor
+    dependencies:
+      - package: VLCKitSPM
+      - framework: Frameworks/Phimengine.xcframework
+        embed: false
+      - sdk: libresolv.tbd
+    info:
+      path: PhimTor/Info.plist
+      properties:
+        CFBundleDisplayName: PhimTor
+        CFBundleShortVersionString: "2.0.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIBackgroundModes: [audio]
+        UIUserInterfaceStyle: Dark
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: PhimTor cần mạng nội bộ để phát phim đang tải.
+        LSApplicationQueriesSchemes: [youtube, vlc]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thayphong.phimtor
+        MARKETING_VERSION: "2.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ENABLE_BITCODE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
+        DEAD_CODE_STRIPPING: YES
+        OTHER_LDFLAGS: ["-lresolv"]

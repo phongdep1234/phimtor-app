@@ -1,0 +1,63 @@
+name: Build IPA
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  ios:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Chọn Xcode
+        run: |
+          X=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          [ -n "$X" ] && sudo xcode-select -s "$X"
+          xcodebuild -version
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: engine/go.sum
+
+      - name: Build bộ tải torrent (gomobile)
+        working-directory: engine
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          gomobile init
+          mkdir -p ../Frameworks
+          gomobile bind -target=ios/arm64 -iosversion=16.0 -ldflags="-s -w" -o ../Frameworks/Phimengine.xcframework .
+          ls -la ../Frameworks/Phimengine.xcframework
+
+      - name: Tạo project Xcode
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build
+        run: |
+          xcodebuild -project PhimTor.xcodeproj -scheme PhimTor -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log | grep -E "error:|warning: unre|BUILD" || true
+          test -d build/Build/Products/Release-iphoneos/PhimTor.app
+
+      - name: Đóng gói IPA
+        run: |
+          mkdir -p out/Payload
+          cp -R build/Build/Products/Release-iphoneos/PhimTor.app out/Payload/
+          cd out && zip -qry PhimTor.ipa Payload && ls -la PhimTor.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhimTor-ipa
+          path: out/PhimTor.ipa
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-log
+          path: build.log
