@@ -1,0 +1,74 @@
+name: Build APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: engine/go.sum
+
+      - name: Build bộ tải torrent (.aar)
+        working-directory: engine
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          gomobile init
+          gomobile bind -target=android/arm,android/arm64 -androidapi 21 -javapkg com.thayphong \
+            -ldflags="-s -w" -o ../android/app/libs/phimengine.aar .
+          ls -la ../android/app/libs
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Chuẩn bị khoá ký
+        working-directory: android
+        env:
+          KS_B64: ${{ secrets.PT_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.PT_STORE_PASS }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > app/release.jks
+            echo "PT_STORE_PASS=$KS_PASS" >> $GITHUB_ENV
+            echo "PT_KEY_PASS=$KS_PASS" >> $GITHUB_ENV
+          else
+            echo "::warning::Chưa có secret PT_KEYSTORE_B64, dùng khoá tạm (bản sau sẽ không cài đè được)"
+            keytool -genkeypair -keystore app/release.jks -alias phimtor -keyalg RSA -keysize 2048 -validity 20000 \
+              -storepass temp1234 -keypass temp1234 -dname "CN=PhimTor"
+            echo "PT_STORE_PASS=temp1234" >> $GITHUB_ENV
+            echo "PT_KEY_PASS=temp1234" >> $GITHUB_ENV
+          fi
+          echo "PT_KEYSTORE=$PWD/app/release.jks" >> $GITHUB_ENV
+
+      - name: Build APK
+        working-directory: android
+        run: gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log | grep -E "^e:|error:|FAILURE|BUILD" ; test -f app/build/outputs/apk/release/app-release.apk
+
+      - name: Đổi tên
+        run: cp android/app/build/outputs/apk/release/app-release.apk PhimTor.apk && ls -la PhimTor.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhimTor-apk
+          path: PhimTor.apk
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-log
+          path: android/build.log

@@ -3,3 +3,10 @@ out/
 Frameworks/
 *.xcodeproj/
 .DS_Store
+android/.gradle/
+android/app/build/
+android/build/
+android/app/libs/*.aar
+android/app/libs/*.jar
+android/local.properties
+*.jks
