@@ -38,7 +38,7 @@ final class AddonStore: ObservableObject {
     private func saveRecents() { if let d = try? JSONEncoder().encode(recents) { ud.set(d, forKey: "recents") } }
 
     // MARK: cài / gỡ add-on
-    static func normalize(_ raw: String) -> String {
+    nonisolated static func normalize(_ raw: String) -> String {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.hasPrefix("stremio://") { s = "https://" + s.dropFirst("stremio://".count) }
         if !s.hasPrefix("http") { s = "https://" + s }
@@ -91,13 +91,13 @@ final class AddonStore: ObservableObject {
         return (try? JSONSerialization.jsonObject(with: data)) as? JSON
     }
 
-    static func enc(_ s: String) -> String {
+    nonisolated static func enc(_ s: String) -> String {
         var allowed = CharacterSet.alphanumerics
         allowed.insert(charactersIn: "-_.!~*'()")
         return s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s
     }
 
-    static func extraPath(_ extra: [(String, String)]) -> String {
+    nonisolated static func extraPath(_ extra: [(String, String)]) -> String {
         guard !extra.isEmpty else { return "" }
         return "/" + extra.map { "\($0.0)=\(enc($0.1))" }.joined(separator: "&")
     }
