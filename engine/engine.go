@@ -448,6 +448,11 @@ func PauseDownload(id string) {
 
 // CancelDownload huỷ tải và xoá file.
 func CancelDownload(id string, path string) {
+	mu.Lock()
+	if j, ok := downloads[id]; ok && j.f != nil && path == "" {
+		path = filepath.Join(dlDir, filepath.FromSlash(j.f.Path()))
+	}
+	mu.Unlock()
 	PauseDownload(id)
 	if path != "" && dlDir != "" && strings.HasPrefix(path, dlDir) {
 		_ = os.Remove(path)

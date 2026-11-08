@@ -23,6 +23,7 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         Repo.init(this)
+        Downloads.init()
     }
 }
 
@@ -156,6 +157,15 @@ data class Sub(val id: String, val url: String, val lang: String, val label: Str
     }
 }
 
+/** Mục "Yêu thích" */
+data class Fav(val id: String, val type: String, val name: String, val poster: String?, val landscape: Boolean, val addonUrl: String?) {
+    fun toJson() = JSONObject().put("id", id).put("type", type).put("name", name).put("poster", poster).put("landscape", landscape).put("addonUrl", addonUrl)
+    val meta get() = Meta.stub(id, type, name, poster)
+    companion object {
+        fun from(o: JSONObject) = Fav(o.optString("id"), o.optString("type"), o.optString("name"), o.str("poster"), o.optBoolean("landscape"), o.str("addonUrl"))
+    }
+}
+
 data class Recent(val id: String, val type: String, val name: String, val poster: String?, val addonUrl: String?,
                   val videoTitle: String?, val position: Double, val duration: Double) {
     fun toJson() = JSONObject().put("id", id).put("type", type).put("name", name).put("poster", poster)
@@ -177,6 +187,7 @@ object Repo {
     lateinit var appCtx: Context
     val addons = mutableStateListOf<Addon>()
     val recents = mutableStateListOf<Recent>()
+    val favorites = mutableStateListOf<Fav>()
     val torboxKey = mutableStateOf("")
     val subSize = mutableStateOf(22f)
     val autoViet = mutableStateOf(true)
@@ -191,6 +202,7 @@ object Repo {
             }
         }
         runCatching { JSONArray(prefs.getString("recents", "[]")).objs().forEach { recents.add(Recent.from(it)) } }
+        runCatching { JSONArray(prefs.getString("favorites", "[]")).objs().forEach { favorites.add(Fav.from(it)) } }
         torboxKey.value = prefs.getString("torbox", "") ?: ""
         subSize.value = prefs.getFloat("subSize", 22f)
         autoViet.value = prefs.getBoolean("autoViet", true)
@@ -211,6 +223,17 @@ object Repo {
     fun saveRecents() {
         val a = JSONArray(); recents.forEach { a.put(it.toJson()) }
         prefs.edit().putString("recents", a.toString()).apply()
+    }
+
+    fun isFav(id: String) = favorites.any { it.id == id }
+
+    /** Trả về true nếu vừa thêm */
+    fun toggleFav(m: Meta, addonUrl: String?): Boolean {
+        val added = if (isFav(m.id)) { favorites.removeAll { it.id == m.id }; false }
+        else { favorites.add(0, Fav(m.id, m.type, m.name, m.poster, m.landscape, addonUrl)); true }
+        val a = JSONArray(); favorites.forEach { a.put(it.toJson()) }
+        prefs.edit().putString("favorites", a.toString()).apply()
+        return added
     }
 
     fun touchRecent(r: Recent) {

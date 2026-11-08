@@ -15,6 +15,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -61,6 +62,8 @@ val Bg = Color(0xFF0E0B22)
 sealed class Screen {
     data object Home : Screen()
     data object Search : Screen()
+    data object Favorites : Screen()
+    data object Downloads : Screen()
     data object Addons : Screen()
     data object Settings : Screen()
     data class CatalogGrid(val addonUrl: String, val catalog: Catalog) : Screen()
@@ -116,6 +119,8 @@ fun AppRoot() {
     val tabs = listOf(
         Triple(Screen.Home, "Khám phá", Icons.Filled.Movie),
         Triple(Screen.Search, "Tìm kiếm", Icons.Filled.Search),
+        Triple(Screen.Favorites, "Yêu thích", Icons.Filled.Favorite),
+        Triple(Screen.Downloads, "Tải về", Icons.Filled.Download),
         Triple(Screen.Addons, "Add-on", Icons.Filled.Extension),
         Triple(Screen.Settings, "Cài đặt", Icons.Filled.Settings)
     )
@@ -124,6 +129,8 @@ fun AppRoot() {
         when (val s = top) {
             Screen.Home -> HomeScreen(push)
             Screen.Search -> SearchScreen(push)
+            Screen.Favorites -> FavoritesScreen(push)
+            Screen.Downloads -> DownloadsScreen()
             Screen.Addons -> AddonsScreen()
             Screen.Settings -> SettingsScreen()
             is Screen.CatalogGrid -> CatalogGridScreen(s, push)
@@ -146,7 +153,8 @@ fun AppRoot() {
         Scaffold(containerColor = Bg, bottomBar = {
             NavigationBar(containerColor = Color(0xFF120E28)) {
                 tabs.forEach { (sc, label, icon) ->
-                    NavigationBarItem(selected = root == sc, onClick = { stack = listOf(sc) }, icon = { Icon(icon, label) }, label = { Text(label) })
+                    NavigationBarItem(selected = root == sc, onClick = { stack = listOf(sc) }, icon = { Icon(icon, label) },
+                        label = { Text(label, fontSize = 10.sp, maxLines = 1) })
                 }
             }
         }) { pad -> Box(Modifier.padding(pad)) { content() } }
@@ -170,10 +178,19 @@ fun Poster(url: String?, width: Int = 112, landscape: Boolean = false, modifier:
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun MetaCard(m: Meta, width: Int = 112, onClick: () -> Unit) {
-    Column(Modifier.width(width.dp).tvFocus().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick)) {
-        Poster(m.poster, width, m.landscape)
+fun MetaCard(m: Meta, width: Int = 112, addonUrl: String? = null, onClick: () -> Unit) {
+    val ctx = LocalContext.current
+    Column(Modifier.width(width.dp).tvFocus().clip(RoundedCornerShape(8.dp)).combinedClickable(onClick = onClick, onLongClick = {
+        // giữ thẻ phim = thêm / bỏ Yêu thích
+        Toast.makeText(ctx, if (Repo.toggleFav(m, addonUrl)) "Đã thêm vào Yêu thích ♥" else "Đã bỏ khỏi Yêu thích", Toast.LENGTH_SHORT).show()
+    })) {
+        Box {
+            Poster(m.poster, width, m.landscape)
+            if (Repo.isFav(m.id)) Icon(Icons.Filled.Favorite, null, tint = Color(0xFFFF4F8B),
+                modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).background(Color(0x99000000), RoundedCornerShape(50)).padding(4.dp).size(14.dp))
+        }
         Text(m.name, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp, bottom = 4.dp))
     }
 }
@@ -222,7 +239,7 @@ fun CatalogRow(a: Addon, c: Catalog, push: (Screen) -> Unit) {
         LazyRow(contentPadding = PaddingValues(16.dp, 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             val list = items
             if (list == null) items(5) { Poster(null) }
-            else items(list, key = { it.id }) { m -> MetaCard(m) { push(Screen.Detail(m, a.transportUrl)) } }
+            else items(list, key = { it.id }) { m -> MetaCard(m, addonUrl = a.transportUrl) { push(Screen.Detail(m, a.transportUrl)) } }
         }
     }
 }
@@ -258,7 +275,7 @@ fun CatalogGridScreen(s: Screen.CatalogGrid, push: (Screen) -> Unit) {
         LazyVerticalGrid(GridCells.Adaptive(110.dp), contentPadding = PaddingValues(16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             items(items, key = { it.id }) { m ->
-                MetaCard(m, 110) { push(Screen.Detail(m, s.addonUrl)) }
+                MetaCard(m, 110, s.addonUrl) { push(Screen.Detail(m, s.addonUrl)) }
                 if (m.id == items.lastOrNull()?.id) LaunchedEffect(m.id) { more() }
             }
         }
@@ -306,7 +323,7 @@ fun SearchScreen(push: (Screen) -> Unit) {
             Column(Modifier.padding(top = 12.dp)) {
                 Text(label, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp))
                 LazyRow(contentPadding = PaddingValues(16.dp, 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(list, key = { it.id }) { m -> MetaCard(m) { push(Screen.Detail(m, url)) } }
+                    items(list, key = { it.id }) { m -> MetaCard(m, addonUrl = url) { push(Screen.Detail(m, url)) } }
                 }
             }
         }
@@ -332,9 +349,15 @@ fun DetailScreen(s: Screen.Detail, push: (Screen) -> Unit) {
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Bg))))
                 Row(Modifier.align(Alignment.BottomStart).padding(16.dp), verticalAlignment = Alignment.Bottom) {
                     Poster(m.poster, 96)
-                    Column(Modifier.padding(start = 12.dp)) {
+                    Column(Modifier.padding(start = 12.dp).weight(1f)) {
                         Text(m.name, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 3)
                         Text(listOfNotNull(m.releaseInfo, m.runtime, m.imdbRating?.let { "★ $it" }).joinToString(" • "), fontSize = 12.sp, color = Color.LightGray)
+                    }
+                    val fav = Repo.isFav(m.id)
+                    IconButton(onClick = { Repo.toggleFav(m, s.addonUrl) },
+                        modifier = Modifier.size(52.dp).tvFocus(RoundedCornerShape(26.dp)).background(Color(0x99000000), RoundedCornerShape(26.dp))) {
+                        Icon(if (fav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, if (fav) "Bỏ yêu thích" else "Yêu thích",
+                            tint = if (fav) Color(0xFFFF4F8B) else Color.White, modifier = Modifier.size(28.dp))
                     }
                 }
             }
@@ -378,6 +401,7 @@ fun StreamsScreen(s: Screen.Streams) {
     val groups = remember { mutableStateListOf<Pair<String, List<Stream>>>() }
     var done by remember { mutableStateOf(false) }
     var resolving by remember { mutableStateOf<Stream?>(null) }
+    var adding by remember { mutableStateOf<Stream?>(null) }
     var filter by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     LaunchedEffect(s.videoId) {
@@ -414,15 +438,36 @@ fun StreamsScreen(s: Screen.Streams) {
         groups.filter { it.second.isNotEmpty() }.forEach { (name, list) ->
             item(key = "h$name") { Text("$name (${list.size})", fontWeight = FontWeight.Bold, color = Color.Gray, modifier = Modifier.padding(16.dp, 14.dp, 16.dp, 4.dp)) }
             itemsIndexed(list.filter { filter.isBlank() || ((it.name ?: "") + (it.title ?: "")).contains(filter, true) }, key = { i, _ -> "$name$i" }) { _, st ->
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp).tvFocus().clip(RoundedCornerShape(8.dp))
-                    .background(Color(0x14FFFFFF)).clickable(enabled = resolving == null) { play(st) }.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        st.name?.let { Text(it, color = Yellow, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 3) }
-                        st.title?.let { Text(it, fontSize = 12.sp, color = Color(0xDDFFFFFF), maxLines = 5) }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.weight(1f).tvFocus().clip(RoundedCornerShape(8.dp))
+                        .background(Color(0x14FFFFFF)).clickable(enabled = resolving == null) { play(st) }.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            st.name?.let { Text(it, color = Yellow, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 3) }
+                            st.title?.let { Text(it, fontSize = 12.sp, color = Color(0xDDFFFFFF), maxLines = 5) }
+                        }
+                        if (resolving == st) CircularProgressIndicator(Modifier.size(22.dp))
+                        else Icon(Icons.Filled.PlayCircle, "Xem", tint = Yellow, modifier = Modifier.size(30.dp))
                     }
-                    if (resolving == st) CircularProgressIndicator(Modifier.size(22.dp))
-                    else Icon(if (st.isTorrent) Icons.Filled.Download else Icons.Filled.PlayCircle, null, tint = Color.Gray)
+                    if (st.isTorrent || (st.url ?: "").startsWith("http")) {
+                        val source = listOfNotNull(st.name, st.title?.lineSequence()?.firstOrNull()).joinToString(" · ")
+                        val ex = Downloads.find(s.videoId, s.title, source)
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.size(70.dp, 64.dp).tvFocus(RoundedCornerShape(12.dp)).clip(RoundedCornerShape(12.dp))
+                            .background(if (ex?.state == "done") Color(0x3343A047) else Yellow)
+                            .clickable(enabled = adding == null) {
+                                if (ex != null) { Toast.makeText(ctx, "Nguồn này đã có trong mục Tải về", Toast.LENGTH_SHORT).show(); return@clickable }
+                                adding = st
+                                scope.launch { Toast.makeText(ctx, Downloads.add(st, s), Toast.LENGTH_LONG).show(); adding = null }
+                            },
+                            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            if (adding == st) CircularProgressIndicator(Modifier.size(24.dp), color = Color.Black)
+                            else Icon(if (ex?.state == "done") Icons.Filled.CheckCircle else Icons.Filled.Download, null,
+                                tint = if (ex?.state == "done") Color(0xFF66BB6A) else Color.Black, modifier = Modifier.size(28.dp))
+                            Text(when { ex?.state == "done" -> "Đã tải"; ex != null -> "${(ex.progress * 100).toInt()}%"; else -> "Tải về" },
+                                fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (ex?.state == "done") Color(0xFF66BB6A) else Color.Black)
+                        }
+                    }
                 }
             }
         }
@@ -511,7 +556,7 @@ fun SettingsScreen() {
             Text("Bộ nhớ", fontWeight = FontWeight.Bold, color = Color.Gray, modifier = Modifier.padding(top = 20.dp))
             TextButton(onClick = { Engine.stopAll(); Toast.makeText(ctx, "Đã xoá dữ liệu tạm", Toast.LENGTH_SHORT).show() }, Modifier.tvFocus()) { Text("Xoá dữ liệu torrent tạm") }
             TextButton(onClick = { Repo.recents.clear(); Repo.saveRecents() }, Modifier.tvFocus()) { Text("Xoá danh sách Đang xem") }
-            Text("PhimTor 2.0 • tương thích add-on Stremio", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 16.dp))
+            Text("PhimTor 2.1 • tương thích add-on Stremio", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 16.dp))
         }
     }
 }
@@ -520,5 +565,111 @@ fun SettingsScreen() {
 fun SwitchRow(t: String, v: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().tvFocus().clickable { onChange(!v) }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(t, Modifier.weight(1f)); Switch(v, onChange)
+    }
+}
+
+// ---------------------------------------------------------------- yêu thích
+@Composable
+fun FavoritesScreen(push: (Screen) -> Unit) {
+    var filter by remember { mutableStateOf("all") }
+    val list = Repo.favorites.filter { filter == "all" || it.type == filter }
+    LazyVerticalGrid(GridCells.Adaptive(118.dp), Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+            Column {
+                Header("Yêu thích", if (Repo.favorites.isEmpty()) null else "${Repo.favorites.size} phim · giữ thẻ phim để bỏ")
+                if (Repo.favorites.isEmpty()) Text("Chưa có phim yêu thích. Mở một phim rồi bấm nút ♥, hoặc giữ thẻ phim để thêm.",
+                    color = Color.Gray, modifier = Modifier.padding(16.dp))
+                else Row(Modifier.padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Chip("Tất cả", filter == "all") { filter = "all" }
+                    Chip("Phim lẻ", filter == "movie") { filter = "movie" }
+                    Chip("Phim bộ", filter == "series") { filter = "series" }
+                }
+            }
+        }
+        items(list, key = { it.id }) { f -> MetaCard(f.meta, 112, f.addonUrl) { push(Screen.Detail(f.meta, f.addonUrl)) } }
+    }
+}
+
+// ---------------------------------------------------------------- tải về
+@Composable
+fun DownloadsScreen() {
+    val ctx = LocalContext.current
+    var confirm by remember { mutableStateOf<DlRec?>(null) }
+    fun play(r: DlRec) {
+        val f = Downloads.file(r)
+        val res = when {
+            f != null -> Resolved(Uri.fromFile(f).toString(), emptyMap(), null, "Đã tải về máy")
+            r.kind == "torrent" && r.hash != null -> Engine.url(r.hash, r.fileIdx, r.trackers, r.hint)?.let { Resolved(it, emptyMap(), r.hash, "Đang tải về · xem trong khi tải") }
+            r.url != null -> Resolved(r.url, r.headers, null, "Link trực tiếp")
+            else -> null
+        } ?: run { Toast.makeText(ctx, "Chưa xem được", Toast.LENGTH_SHORT).show(); return }
+        val st = Stream("Tải về", r.source, null, res.url, null, null, null, null, emptyList(), r.fileName, r.videoSize, r.videoHash, emptyMap())
+        val recent = Recent(r.metaId, r.type, r.name, r.poster, r.addonUrl, r.videoTitle, 0.0, 0.0)
+        Repo.touchRecent(recent)
+        PlayerActivity.start(ctx, res, r.title, r.type, r.videoId, st, recent)
+    }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+        item { Header("Tải về", if (Downloads.items.isEmpty()) null else "Còn trống ${fmtBytes(Downloads.freeSpace())}") }
+        if (Downloads.items.isEmpty()) item {
+            Text("Chưa có phim tải về. Mở phim → Chọn nguồn phát → bấm nút vàng \"Tải về\" bên phải nguồn muốn tải.",
+                color = Color.Gray, modifier = Modifier.padding(16.dp))
+        }
+        items(Downloads.items.toList(), key = { it.id }) { r ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x14FFFFFF)).padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.weight(1f).tvFocus().clip(RoundedCornerShape(8.dp)).clickable { play(r) }.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Poster(r.poster, 54)
+                    Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                        Text(r.title, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (r.source.isNotEmpty()) Text(r.source, fontSize = 11.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (r.state != "done") LinearProgressIndicator(progress = { r.progress.toFloat() }, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            color = if (r.state == "failed") Color.Red else Yellow)
+                        Text(dlStatus(r), fontSize = 12.sp, color = if (r.state == "failed") Color(0xFFFF6B6B) else Color.Gray, maxLines = 2)
+                    }
+                }
+                val (icon, act) = when (r.state) {
+                    "done" -> Icons.Filled.PlayArrow to { play(r) }
+                    "downloading", "waiting" -> Icons.Filled.Pause to { Downloads.pause(r.id) }
+                    else -> Icons.Filled.Download to { Downloads.resume(r.id) }
+                }
+                IconButton(onClick = act, modifier = Modifier.padding(start = 6.dp).size(50.dp).tvFocus(RoundedCornerShape(25.dp))
+                    .background(if (r.state == "downloading" || r.state == "waiting") Color(0x33FFFFFF) else Yellow, RoundedCornerShape(25.dp))) {
+                    Icon(icon, null, tint = if (r.state == "downloading" || r.state == "waiting") Color.White else Color.Black)
+                }
+                IconButton(onClick = { confirm = r }, modifier = Modifier.padding(start = 4.dp).size(44.dp).tvFocus(RoundedCornerShape(22.dp))) {
+                    Icon(Icons.Filled.Delete, "Xoá", tint = Color.Gray)
+                }
+            }
+        }
+        if (Downloads.items.any { it.kind == "torrent" }) item {
+            Text("Phim tải bằng torrent chỉ tải khi app đang mở. Phim tải bằng link trực tiếp / TorBox vẫn tải khi tắt app.",
+                fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(16.dp))
+        }
+    }
+    confirm?.let { r ->
+        AlertDialog(onDismissRequest = { confirm = null }, title = { Text("Xoá phim tải về?") }, text = { Text("\"${r.title}\" sẽ bị xoá khỏi máy.") },
+            confirmButton = { TextButton(onClick = { Downloads.delete(r.id); confirm = null }) { Text("Xoá", color = Color(0xFFFF6B6B)) } },
+            dismissButton = { TextButton(onClick = { confirm = null }) { Text("Huỷ") } })
+    }
+}
+
+fun dlStatus(r: DlRec): String {
+    val size = if (r.total > 0) "${fmtBytes(r.done)} / ${fmtBytes(r.total)}" else if (r.done > 0) fmtBytes(r.done) else ""
+    return when (r.state) {
+        "done" -> "Đã tải xong · ${fmtBytes(r.total)} · bấm để xem"
+        "waiting" -> "Đang chờ…"
+        "paused" -> "Tạm dừng · $size"
+        "failed" -> "Lỗi: ${r.error ?: "không tải được"} · bấm ↓ để thử lại"
+        else -> {
+            if (r.kind == "torrent" && r.total == 0L) return "Đang tìm nguồn chia sẻ… (${r.peers} kết nối)"
+            var t = "${(r.progress * 100).toInt()}% · $size"
+            if (r.speed > 0) {
+                t += " · ${fmtBytes(r.speed)}/s"
+                if (r.total > r.done) { val sec = (r.total - r.done) / r.speed; t += " · còn " + if (sec >= 3600) "${sec / 3600} giờ ${(sec % 3600) / 60} phút" else "${maxOf(1, sec / 60)} phút" }
+            }
+            if (r.kind == "torrent") t += " · ${r.peers} kết nối"
+            t
+        }
     }
 }
