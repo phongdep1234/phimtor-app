@@ -23,12 +23,17 @@ import (
 )
 
 var (
-	mu       sync.Mutex
-	client   *torrent.Client
-	port     int
-	dataDir  string
-	lastErr  string
-	active   = map[string]*torrent.Torrent{}
+	mu      sync.Mutex
+	client  *torrent.Client
+	port    int
+	dataDir string
+	lastErr string
+	active  = map[string]*torrent.Torrent{}
+	// Tải về máy: torrent lưu riêng ở thư mục "Phim tải về", không bị xoá khi đóng trình phát
+	dlTorrents      = map[string]*torrent.Torrent{}
+	downloads       = map[string]*dlJob{}
+	dlStore         storage.ClientImpl
+	dlDir           string
 	defaultTrackers = []string{
 		"udp://tracker.opentrackr.org:1337/announce",
 		"udp://open.demonii.com:1337/announce",
@@ -104,6 +109,9 @@ func getTorrent(hash string) (*torrent.Torrent, error) {
 	if client == nil {
 		return nil, fmt.Errorf("engine chưa chạy")
 	}
+	if t, ok := dlTorrents[hash]; ok {
+		return t, nil
+	}
 	if t, ok := active[hash]; ok {
 		return t, nil
 	}
@@ -135,7 +143,9 @@ func AddMagnet(magnet string) string {
 	t.AddTrackers([][]string{defaultTrackers})
 	h := t.InfoHash().HexString()
 	mu.Lock()
-	active[h] = t
+	if _, ok := dlTorrents[h]; !ok {
+		active[h] = t
+	}
 	mu.Unlock()
 	return h
 }
@@ -200,10 +210,15 @@ func serveStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no file", 404)
 		return
 	}
-	// chỉ tải file đang xem
-	for _, o := range t.Files() {
-		if o != f {
-			o.SetPriority(0)
+	// chỉ tải file đang xem (trừ khi torrent đang được tải về máy: giữ nguyên các file đang tải)
+	mu.Lock()
+	_, isDl := dlTorrents[hash]
+	mu.Unlock()
+	if !isDl {
+		for _, o := range t.Files() {
+			if o != f {
+				o.SetPriority(0)
+			}
 		}
 	}
 	rd := f.NewReader()
@@ -286,5 +301,169 @@ func DropAll() {
 		for _, e := range entries {
 			_ = os.RemoveAll(filepath.Join(dataDir, e.Name()))
 		}
+	}
+}
+
+// ---------------- Tải phim về máy ----------------
+
+type dlJob struct {
+	hash string
+	idx  int
+	hint string
+	t    *torrent.Torrent
+	f    *torrent.File
+	err  string
+}
+
+type dlStatus struct {
+	State string `json:"state"` // meta | downloading | done | error | none
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	Done  int64  `json:"done"`
+	Total int64  `json:"total"`
+	Peers int    `json:"peers"`
+	Error string `json:"error"`
+}
+
+func ensureDlStore(dir string) error {
+	if dlStore != nil {
+		return nil
+	}
+	_ = os.MkdirAll(dir, 0o755)
+	pc, err := storage.NewBoltPieceCompletion(dir)
+	if err != nil {
+		pc = storage.NewMapPieceCompletion()
+	}
+	dlStore = storage.NewFileOpts(storage.NewFileClientOpts{ClientBaseDir: dir, PieceCompletion: pc})
+	dlDir = dir
+	return nil
+}
+
+// StartDownload bắt đầu (hoặc tiếp tục) tải một file trong torrent về thư mục dir.
+// Trả về mã công việc "<infohash>:<fileIdx>|<hint>", hoặc "" nếu lỗi.
+func StartDownload(magnet string, fileIdx int, hint string, dir string) string {
+	mu.Lock()
+	c := client
+	mu.Unlock()
+	if c == nil {
+		return setErr(fmt.Errorf("engine chưa chạy"))
+	}
+	if !strings.HasPrefix(magnet, "magnet:") {
+		magnet = "magnet:?xt=urn:btih:" + magnet
+	}
+	spec, err := torrent.TorrentSpecFromMagnetUri(magnet)
+	if err != nil {
+		return setErr(err)
+	}
+	h := spec.InfoHash.HexString()
+	id := fmt.Sprintf("%s:%d|%s", h, fileIdx, hint)
+
+	mu.Lock()
+	if _, ok := downloads[id]; ok {
+		mu.Unlock()
+		return id
+	}
+	_ = ensureDlStore(dir)
+	t, ok := dlTorrents[h]
+	if !ok {
+		// đang phát thử torrent này bằng bộ nhớ tạm → bỏ, thêm lại với nơi lưu "Phim tải về"
+		if old, ok := active[h]; ok {
+			old.Drop()
+			delete(active, h)
+		}
+		spec.Storage = dlStore
+		nt, _, err := c.AddTorrentSpec(spec)
+		if err != nil {
+			mu.Unlock()
+			return setErr(err)
+		}
+		nt.AddTrackers([][]string{defaultTrackers})
+		dlTorrents[h] = nt
+		t = nt
+	}
+	j := &dlJob{hash: h, idx: fileIdx, hint: hint, t: t}
+	downloads[id] = j
+	mu.Unlock()
+
+	go func() {
+		<-t.GotInfo()
+		f := pickFile(t, fileIdx, hint)
+		mu.Lock()
+		defer mu.Unlock()
+		if f == nil {
+			j.err = "Không có file video trong torrent"
+			return
+		}
+		j.f = f
+		f.Download()
+	}()
+	return id
+}
+
+// DownloadStatus trả về JSON trạng thái của một công việc tải.
+func DownloadStatus(id string) string {
+	mu.Lock()
+	j, ok := downloads[id]
+	mu.Unlock()
+	s := dlStatus{State: "none"}
+	if ok {
+		s.Peers = j.t.Stats().ActivePeers
+		switch {
+		case j.err != "":
+			s.State = "error"
+			s.Error = j.err
+		case j.f == nil:
+			s.State = "meta"
+		default:
+			s.Name = filepath.Base(j.f.DisplayPath())
+			s.Path = filepath.Join(dlDir, filepath.FromSlash(j.f.Path()))
+			s.Total = j.f.Length()
+			s.Done = j.f.BytesCompleted()
+			s.State = "downloading"
+			if s.Done >= s.Total && s.Total > 0 {
+				if _, err := os.Stat(s.Path); err == nil {
+					s.State = "done"
+				}
+			}
+		}
+	}
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// PauseDownload ngừng tải (giữ phần đã tải để tải tiếp sau).
+func PauseDownload(id string) {
+	mu.Lock()
+	defer mu.Unlock()
+	j, ok := downloads[id]
+	if !ok {
+		return
+	}
+	if j.f != nil {
+		j.f.SetPriority(0)
+	}
+	delete(downloads, id)
+	dropIfUnused(j.hash)
+}
+
+// CancelDownload huỷ tải và xoá file.
+func CancelDownload(id string, path string) {
+	PauseDownload(id)
+	if path != "" && dlDir != "" && strings.HasPrefix(path, dlDir) {
+		_ = os.Remove(path)
+		_ = os.Remove(path + ".part")
+	}
+}
+
+// gọi khi đang giữ mu
+func dropIfUnused(h string) {
+	for _, o := range downloads {
+		if o.hash == h {
+			return
+		}
+	}
+	if t, ok := dlTorrents[h]; ok {
+		t.Drop()
+		delete(dlTorrents, h)
 	}
 }

@@ -24,8 +24,8 @@ targets:
       path: PhimTor/Info.plist
       properties:
         CFBundleDisplayName: PhimTor
-        CFBundleShortVersionString: "2.0.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "2.1.0"
+        CFBundleVersion: "2"
         UILaunchScreen: {}
         UIApplicationSupportsIndirectInputEvents: true
         UISupportedInterfaceOrientations:
@@ -37,7 +37,9 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        UIBackgroundModes: [audio]
+        UIBackgroundModes: [audio, fetch]
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         UIUserInterfaceStyle: Dark
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
@@ -47,8 +49,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.thayphong.phimtor
-        MARKETING_VERSION: "2.0.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "2.1.0"
+        CURRENT_PROJECT_VERSION: "2"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         ENABLE_BITCODE: NO
@@ -75,8 +77,8 @@ targets:
       properties:
         CFBundleName: PhimTor
         CFBundleDisplayName: PhimTor
-        CFBundleShortVersionString: "2.0.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "2.1.0"
+        CFBundleVersion: "2"
         LSApplicationCategoryType: public.app-category.entertainment
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
@@ -86,8 +88,8 @@ targets:
       base:
         PRODUCT_NAME: PhimTor
         PRODUCT_BUNDLE_IDENTIFIER: com.thayphong.phimtor.mac
-        MARKETING_VERSION: "2.0.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "2.1.0"
+        CURRENT_PROJECT_VERSION: "2"
         SWIFT_VERSION: "5.0"
         ARCHS: arm64
         ONLY_ACTIVE_ARCH: NO

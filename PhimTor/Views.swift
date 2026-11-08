@@ -7,6 +7,7 @@ struct PhimTorApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     #endif
     @StateObject private var store = AddonStore.shared
+    init() { _ = Downloads.shared }   // nối lại các phim đang tải dở
     var body: some Scene {
         WindowGroup {
             RootView().environmentObject(store).preferredColorScheme(.dark).tint(.yellow)
@@ -22,6 +23,9 @@ struct PhimTorApp: App {
 
 #if os(iOS)
 final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
+        Downloads.shared.backgroundCompletion = completionHandler
+    }
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         Orientation.mask
     }
@@ -29,12 +33,65 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 #endif
 
 struct RootView: View {
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var hsc
+    /// iPhone chỉ hiện được 5 thẻ ở thanh dưới → thẻ Add-on chuyển vào trong Cài đặt
+    private var compact: Bool { hsc == .compact }
+    #else
+    private let compact = false
+    #endif
+    @ObservedObject private var dl = Downloads.shared
+
     var body: some View {
         TabView {
             NavigationStack { HomeView() }.tabItem { Label("Khám phá", systemImage: "film") }
             NavigationStack { SearchView() }.tabItem { Label("Tìm kiếm", systemImage: "magnifyingglass") }
-            NavigationStack { AddonsView() }.tabItem { Label("Add-on", systemImage: "puzzlepiece.extension") }
-            NavigationStack { SettingsView() }.tabItem { Label("Cài đặt", systemImage: "gearshape") }
+            NavigationStack { FavoritesView() }.tabItem { Label("Yêu thích", systemImage: "heart.fill") }
+            NavigationStack { DownloadsView() }.tabItem { Label("Tải về", systemImage: "arrow.down.circle.fill") }
+                .badge(dl.items.filter { $0.state == .downloading }.count)
+            if !compact {
+                NavigationStack { AddonsView() }.tabItem { Label("Add-on", systemImage: "puzzlepiece.extension") }
+            }
+            NavigationStack { SettingsView(showAddons: compact) }.tabItem { Label("Cài đặt", systemImage: "gearshape") }
+        }
+    }
+}
+
+/// Nút / menu Yêu thích dùng chung
+struct FavButton: View {
+    let meta: MetaItem
+    let addonUrl: String?
+    var size: CGFloat = 22
+    @EnvironmentObject var store: AddonStore
+    var body: some View {
+        let on = store.isFavorite(meta.id)
+        Button { withAnimation(.spring(response: 0.3)) { store.toggleFavorite(meta, addonUrl: addonUrl) } } label: {
+            Image(systemName: on ? "heart.fill" : "heart")
+                .font(.system(size: size, weight: .bold))
+                .foregroundColor(on ? .pink : .white)
+                .frame(width: size * 2.1, height: size * 2.1)
+                .background(Color.black.opacity(0.5), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(on ? "Bỏ yêu thích" : "Yêu thích")
+    }
+}
+
+extension View {
+    /// Giữ (iPhone) / chuột phải (Mac) một thẻ phim → Thêm / Bỏ Yêu thích
+    func favMenu(_ m: MetaItem, _ addonUrl: String?) -> some View { modifier(FavMenu(meta: m, addonUrl: addonUrl)) }
+}
+
+struct FavMenu: ViewModifier {
+    let meta: MetaItem
+    let addonUrl: String?
+    @EnvironmentObject var store: AddonStore
+    func body(content: Content) -> some View {
+        content.contextMenu {
+            let on = store.isFavorite(meta.id)
+            Button { store.toggleFavorite(meta, addonUrl: addonUrl) } label: {
+                Label(on ? "Bỏ Yêu thích" : "Thêm vào Yêu thích", systemImage: on ? "heart.slash" : "heart")
+            }
         }
     }
 }
@@ -59,9 +116,16 @@ struct Poster: View {
 struct MetaCard: View {
     let item: MetaItem
     var width: CGFloat = 112
+    @EnvironmentObject var store: AddonStore
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Poster(url: item.poster, landscape: item.landscapePoster, width: width)
+                .overlay(alignment: .topTrailing) {
+                    if store.isFavorite(item.id) {
+                        Image(systemName: "heart.fill").font(.caption.bold()).foregroundColor(.pink)
+                            .padding(5).background(Color.black.opacity(0.55), in: Circle()).padding(4)
+                    }
+                }
             Text(item.name).font(.caption).lineLimit(2).frame(width: width, alignment: .leading)
         }
     }
@@ -155,7 +219,7 @@ struct CatalogRow: View {
                         LazyHStack(spacing: 12) {
                             if !loaded { ForEach(0..<5, id: \.self) { _ in Poster(url: nil) } }
                             ForEach(items) { m in
-                                NavigationLink(value: MetaLink(item: m, addonUrl: addon.transportUrl)) { MetaCard(item: m) }.buttonStyle(.plain)
+                                NavigationLink(value: MetaLink(item: m, addonUrl: addon.transportUrl)) { MetaCard(item: m) }.buttonStyle(.plain).favMenu(m, addon.transportUrl)
                             }
                         }.padding(.horizontal)
                     }
@@ -192,7 +256,7 @@ struct CatalogGrid: View {
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 12)], spacing: 16) {
                 ForEach(items) { m in
-                    NavigationLink(value: MetaLink(item: m, addonUrl: link.addonUrl)) { MetaCard(item: m, width: 105) }.buttonStyle(.plain)
+                    NavigationLink(value: MetaLink(item: m, addonUrl: link.addonUrl)) { MetaCard(item: m, width: 105) }.buttonStyle(.plain).favMenu(m, link.addonUrl)
                         .onAppear { if m.id == items.last?.id { more() } }
                 }
             }.padding()
@@ -245,7 +309,7 @@ struct SearchView: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: 12) {
                                 ForEach(r.2) { m in
-                                    NavigationLink(value: MetaLink(item: m, addonUrl: r.1)) { MetaCard(item: m) }.buttonStyle(.plain)
+                                    NavigationLink(value: MetaLink(item: m, addonUrl: r.1)) { MetaCard(item: m) }.buttonStyle(.plain).favMenu(m, r.1)
                                 }
                             }.padding(.horizontal)
                         }
@@ -313,6 +377,8 @@ struct DetailView: View {
                             Text([m.releaseInfo, m.runtime, m.imdbRating.map { "⭐️ \($0)" }].compactMap { $0 }.joined(separator: " • "))
                                 .font(.caption).foregroundColor(.secondary)
                         }
+                        Spacer(minLength: 0)
+                        FavButton(meta: m, addonUrl: addonUrl, size: 22)
                     }.padding()
                 }
                 if !m.genres.isEmpty { Text(m.genres.prefix(4).joined(separator: " · ")).font(.caption).foregroundColor(.secondary).padding(.horizontal) }
@@ -399,6 +465,9 @@ struct StreamsView: View {
     @State private var playing: PlayTarget?
     @State private var errorText: String?
     @State private var filter = ""
+    @State private var adding: UUID?
+    @State private var toast: String?
+    @ObservedObject private var dl = Downloads.shared
 
     struct PlayTarget: Identifiable { let id = UUID(); let src: ResolvedSource; let stream: StreamItem }
 
@@ -412,7 +481,11 @@ struct StreamsView: View {
                 if !g.1.isEmpty {
                     Section("\(g.0) (\(g.1.count))") {
                         ForEach(g.1.filter { filter.isEmpty || (($0.name ?? "") + ($0.title ?? "")).localizedCaseInsensitiveContains(filter) }) { s in
-                            Button { play(s) } label: { row(s) }.disabled(resolving != nil)
+                            HStack(spacing: 10) {
+                                Button { play(s) } label: { row(s) }
+                                    .buttonStyle(.borderless).disabled(resolving != nil)
+                                if canDownload(s) { downloadButton(s) }
+                            }
                         }
                     }
                 }
@@ -435,6 +508,15 @@ struct StreamsView: View {
             if let t = playing { PlayerWindow.open(title: link.title, playerView(t)); playing = nil }
         }
         #endif
+        .overlay(alignment: .bottom) {
+            if let toast {
+                Text(toast).font(.subheadline.bold()).foregroundColor(.white).multilineTextAlignment(.center)
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(Color.black.opacity(0.85), in: Capsule())
+                    .padding(.bottom, 24).padding(.horizontal).transition(.opacity)
+            }
+        }
+        .animation(.easeInOut, value: toast)
         .alert("Không phát được", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
             Button("OK") {}
         } message: { Text(errorText ?? "") }
@@ -455,9 +537,45 @@ struct StreamsView: View {
             }
             Spacer()
             if resolving == s.id { ProgressView() }
-            else { Image(systemName: s.infoHash != nil || (s.url ?? "").hasPrefix("magnet:") ? "arrow.down.circle" : "play.circle").foregroundColor(.secondary) }
+            else { Image(systemName: "play.circle.fill").font(.title2).foregroundColor(.yellow) }
         }
         .padding(.vertical, 2)
+        .contentShape(Rectangle())
+    }
+
+    func canDownload(_ s: StreamItem) -> Bool {
+        s.infoHash != nil || (s.url ?? "").hasPrefix("magnet:") || (s.url ?? "").hasPrefix("http")
+    }
+
+    /// Nút Tải về to, tách riêng khỏi nút xem
+    func downloadButton(_ s: StreamItem) -> some View {
+        let existing = dl.items.first { $0.videoId == link.videoId && $0.title == link.title && $0.source.hasPrefix(s.name ?? "\u{0}") }
+        return Button {
+            guard existing == nil, adding == nil else { flash("Nguồn này đã có trong thẻ Tải về"); return }
+            adding = s.id
+            Task {
+                let msg = await Downloads.shared.add(s, link: link)
+                adding = nil
+                flash(msg)
+            }
+        } label: {
+            VStack(spacing: 3) {
+                if adding == s.id { ProgressView().frame(width: 26, height: 26) }
+                else { Image(systemName: existing?.state == .done ? "checkmark.circle.fill" : existing != nil ? "arrow.down.circle.dotted" : "arrow.down.to.line.circle.fill").font(.system(size: 26)) }
+                Text(existing?.state == .done ? "Đã tải" : existing != nil ? "\(Int((existing?.progress ?? 0) * 100))%" : "Tải về")
+                    .font(.caption2.bold())
+            }
+            .foregroundColor(existing?.state == .done ? .green : .black)
+            .frame(width: 64, height: 58)
+            .background(existing?.state == .done ? Color.green.opacity(0.18) : Color.yellow, in: RoundedRectangle(cornerRadius: 12))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+    }
+
+    func flash(_ t: String) {
+        toast = t
+        Task { try? await Task.sleep(nanoseconds: 2_800_000_000); if toast == t { toast = nil } }
     }
 
     func play(_ s: StreamItem) {
@@ -545,10 +663,16 @@ struct AddonsView: View {
 
 // MARK: - Cài đặt
 struct SettingsView: View {
+    var showAddons = false
     @EnvironmentObject var store: AddonStore
     @State private var cleared = false
     var body: some View {
         Form {
+            if showAddons {
+                Section {
+                    NavigationLink { AddonsView() } label: { Label("Add-on (thêm / gỡ / sắp xếp)", systemImage: "puzzlepiece.extension") }
+                }
+            }
             Section {
                 SecureField("API key TorBox (không bắt buộc)", text: $store.torboxKey)
                     .plainInput()
@@ -569,7 +693,7 @@ struct SettingsView: View {
                 Button("Xoá danh sách Đang xem", role: .destructive) { store.recents = [] }
             }
             Section {
-                Text("PhimTor 2.0 • tương thích add-on Stremio").font(.footnote).foregroundColor(.secondary)
+                Text("PhimTor 2.1 • tương thích add-on Stremio").font(.footnote).foregroundColor(.secondary)
             }
         }
         .navigationTitle("Cài đặt")

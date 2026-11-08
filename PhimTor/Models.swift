@@ -234,3 +234,16 @@ struct RecentItem: Codable, Hashable, Identifiable {
     var duration: Double = 0
     var updated = Date()
 }
+
+/// Mục "Yêu thích"
+struct FavItem: Codable, Hashable, Identifiable {
+    var id: String
+    var type: String
+    var name: String
+    var poster: String?
+    var landscape: Bool = false
+    var addonUrl: String?
+    var added = Date()
+
+    var meta: MetaItem { MetaItem(json: ["id": id, "type": type, "name": name.isEmpty ? id : name, "poster": poster as Any])! }
+}

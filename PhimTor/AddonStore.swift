@@ -13,6 +13,7 @@ final class AddonStore: ObservableObject {
 
     @Published var addons: [Addon] = [] { didSet { save() } }
     @Published var recents: [RecentItem] = [] { didSet { saveRecents() } }
+    @Published var favorites: [FavItem] = [] { didSet { if let d = try? JSONEncoder().encode(favorites) { ud.set(d, forKey: "favorites") } } }
     @AppStorage("torboxKey") var torboxKey = ""
     @AppStorage("subFontSize") var subFontSize = 22.0
     @AppStorage("subBottom") var subBottom = 28.0
@@ -31,6 +32,7 @@ final class AddonStore: ObservableObject {
     init() {
         if let d = ud.data(forKey: "addons"), let a = try? JSONDecoder().decode([Addon].self, from: d) { addons = a }
         if let d = ud.data(forKey: "recents"), let r = try? JSONDecoder().decode([RecentItem].self, from: d) { recents = r }
+        if let d = ud.data(forKey: "favorites"), let f = try? JSONDecoder().decode([FavItem].self, from: d) { favorites = f }
         Task { await ensureBuiltIns() }
     }
 
@@ -166,6 +168,15 @@ final class AddonStore: ObservableObject {
     }
 
     // MARK: đang xem
+    // MARK: Yêu thích
+
+    func isFavorite(_ id: String) -> Bool { favorites.contains { $0.id == id } }
+
+    func toggleFavorite(_ m: MetaItem, addonUrl: String?) {
+        if isFavorite(m.id) { favorites.removeAll { $0.id == m.id } }
+        else { favorites.insert(FavItem(id: m.id, type: m.type, name: m.name, poster: m.poster, landscape: m.landscapePoster, addonUrl: addonUrl), at: 0) }
+    }
+
     func touchRecent(_ r: RecentItem) {
         recents.removeAll { $0.id == r.id }
         recents.insert(r, at: 0)
